@@ -1,0 +1,107 @@
+// Este es un shader avanzado para implementar texture splatting
+// basado en la técnica mostrada en el artículo de Texture Splatting
+
+// Definimos múltiples texturas
+Texture2D    g_TextureBase;     // Textura base (por ejemplo, hierba)
+Texture2D    g_TextureRed;      // Textura para canal rojo (por ejemplo, roca)
+Texture2D    g_TextureGreen;    // Textura para canal verde (por ejemplo, arena)
+Texture2D    g_TextureBlue;     // Textura para canal azul (por ejemplo, camino)
+Texture2D    g_TextureBlendMap; // Mapa de mezcla RGB
+
+// Samplers correspondientes
+SamplerState g_TextureBase_sampler;
+SamplerState g_TextureRed_sampler;
+SamplerState g_TextureGreen_sampler;
+SamplerState g_TextureBlue_sampler;
+SamplerState g_TextureBlendMap_sampler;
+
+struct PSInput
+{
+    float4 Pos : SV_POSITION;
+    float2 UV : TEX_COORD;
+    uint InstanceID : INSTANCE_ID;
+};
+
+struct PSOutput
+{
+    float4 Color : SV_TARGET;
+};
+
+// Implementación de texture splatting basado en un mapa de mezcla RGB
+float4 SplatTextures(float2 uv)
+{
+    // Muestreamos el mapa de mezcla
+    float4 blendFactor = g_TextureBlendMap.Sample(g_TextureBlendMap_sampler, uv);
+    
+    // Obtenemos las cuatro texturas - usamos uvs escaladas para cada una para variar el detalle
+    float4 baseColor = g_TextureBase.Sample(g_TextureBase_sampler, uv * 2.0);
+    float4 redColor = g_TextureRed.Sample(g_TextureRed_sampler, uv * 3.0);
+    float4 greenColor = g_TextureGreen.Sample(g_TextureGreen_sampler, uv * 1.5);
+    float4 blueColor = g_TextureBlue.Sample(g_TextureBlue_sampler, uv * 2.5);
+    
+    // La base siempre está presente, pero disminuye con la intensidad de los otros canales
+    float sumChannels = blendFactor.r + blendFactor.g + blendFactor.b;
+    float baseStrength = clamp(1.0 - sumChannels, 0.0, 1.0);
+    
+    // Mezclamos proporcionalmente usando los canales RGB
+    float4 finalColor =
+        baseColor * baseStrength +
+        redColor * blendFactor.r +
+        greenColor * blendFactor.g +
+        blueColor * blendFactor.b;
+    
+    return finalColor;
+}
+
+// Implementación alternativa que utiliza ruido procedural para crear una mezcla dinámica
+float4 ProceduralSplat(float2 uv)
+{
+    float2 scaledUV = uv * 5.0; // Escalar para detalle
+    
+    // Crear un patrón de ruido simple usando seno/coseno
+    float noise = 0.5 * (
+        sin(scaledUV.x * 5.3 + scaledUV.y * 1.7) +
+        cos(scaledUV.y * 4.2 - scaledUV.x * 2.3)
+    );
+    
+    // Generar valores para canales R,G,B basados en el ruido
+    float3 noiseFactors;
+    noiseFactors.r = clamp(noise + 0.3, 0.0, 1.0);
+    noiseFactors.g = clamp(noise - 0.1, 0.0, 1.0);
+    noiseFactors.b = clamp(1.0 - abs(noise), 0.0, 1.0);
+    
+    // Normalizar para asegurarnos que sumen como máximo 1.0
+    float sum = noiseFactors.r + noiseFactors.g + noiseFactors.b;
+    if (sum > 1.0) noiseFactors /= sum;
+    
+    // Muestrear las texturas
+    float4 redColor = g_TextureRed.Sample(g_TextureRed_sampler, uv * 2.0);
+    float4 greenColor = g_TextureGreen.Sample(g_TextureGreen_sampler, uv * 1.5);
+    float4 blueColor = g_TextureBlue.Sample(g_TextureBlue_sampler, uv * 2.5);
+    
+    // Combinar
+    float4 finalColor =
+        redColor * noiseFactors.r +
+        greenColor * noiseFactors.g +
+        blueColor * noiseFactors.b;
+    
+    return finalColor;
+}
+
+void main(in PSInput PSIn, out PSOutput PSOut)
+{
+    // Seleccionar el método apropiado según el ID de instancia
+    if (PSIn.InstanceID % 3 == 0)
+    {
+        PSOut.Color = SplatTextures(PSIn.UV);
+    }
+    else
+    {
+        PSOut.Color = ProceduralSplat(PSIn.UV);
+    }
+    
+#if CONVERT_PS_OUTPUT_TO_GAMMA
+    // Use fast approximation for gamma correction.
+    PSOut.Color.rgb = pow(PSOut.Color.rgb, float3(1.0 / 2.2, 1.0 / 2.2, 1.0 / 2.2));
+#endif
+}

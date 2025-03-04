@@ -1,0 +1,130 @@
+Texture2D    g_Texture;        // Textura principal (DGLogo)
+Texture2D    g_TextureDetail;  // Textura de detalle (BrickWall)
+Texture2D    g_TextureBlend;   // Textura de mezcla/control (BlendMap)
+Texture2D    g_TextureAlt;     // Textura alternativa (MetalPlate)
+
+SamplerState g_Texture_sampler; // Sampler para todas las texturas
+
+struct PSInput
+{
+    float4 Pos      : SV_POSITION;
+    float2 UV       : TEX_COORD;
+    uint   ObjType  : OBJ_TYPE;
+};
+
+struct PSOutput
+{
+    float4 Color : SV_TARGET;
+};
+
+// Determina qué cara del cubo está siendo renderizada
+// basándose en coordenadas UV
+uint DetermineCubeFace(float2 uv)
+{
+    // Método simplificado para determinar la cara
+    // basado en rangos de coordenadas UV
+    
+    // En textura de cubo estándar, cada cara tiene coordenadas
+    // UV en rangos específicos
+    if (uv.x <= 0.25)
+        return 0; // Cara izquierda
+    if (uv.x >= 0.75)
+        return 1; // Cara derecha
+    if (uv.y <= 0.25)
+        return 2; // Cara inferior
+    if (uv.y >= 0.75)
+        return 3; // Cara superior
+    
+    // Parte central dividida en dos para frontal/trasera
+    if (uv.x <= 0.5)
+        return 4; // Cara frontal
+    
+    return 5; // Cara trasera
+}
+
+// Aplica textura específica a cada cara del cubo
+float4 ApplyCubeTextures(float2 uv, uint faceIndex, uint cubeTypeVariation)
+{
+    // Usamos el tipo de cubo para rotar las asignaciones de textura
+    // entre diferentes cubos para crear variedad
+    uint adjustedFaceIndex = (faceIndex + cubeTypeVariation) % 6;
+    
+    // Asignamos textura única a cada cara
+    switch (adjustedFaceIndex)
+    {
+        case 0: // Primera cara: DGLogo sin modificar
+            return g_Texture.Sample(g_Texture_sampler, uv);
+            
+        case 1: // Segunda cara: BrickWall
+            return g_TextureDetail.Sample(g_Texture_sampler, uv);
+            
+        case 2: // Tercera cara: MetalPlate
+            return g_TextureAlt.Sample(g_Texture_sampler, uv);
+            
+        case 3: // Cuarta cara: BlendMap
+            return g_TextureBlend.Sample(g_Texture_sampler, uv);
+            
+        case 4: // Quinta cara: DGLogo rotado (cambiamos escala UV)
+            return g_Texture.Sample(g_Texture_sampler, float2(uv.y, uv.x));
+            
+        case 5: // Sexta cara: BrickWall con escala diferente
+        default:
+            return g_TextureDetail.Sample(g_Texture_sampler, uv * 2.0);
+    }
+}
+
+// Efecto para conectores/barras: gradiente simple
+float4 ApplyConnectorEffect(float2 uv)
+{
+    // Gradiente a lo largo del conector
+    if (uv.x < 0.5)
+        return g_TextureDetail.Sample(g_Texture_sampler, uv);
+    else
+        return g_TextureAlt.Sample(g_Texture_sampler, uv);
+}
+
+// Efecto para la base: tablero de ajedrez limpio
+float4 ApplyBaseEffect(float2 uv)
+{
+    // Patrón de tablero de ajedrez claro
+    float2 checkPos = floor(uv * 8.0);
+    float checker = fmod(checkPos.x + checkPos.y, 2.0);
+    
+    if (checker < 0.5)
+        return g_Texture.Sample(g_Texture_sampler, uv);
+    else
+        return g_TextureAlt.Sample(g_Texture_sampler, uv);
+}
+
+void main(in PSInput PSIn, out PSOutput PSOut)
+{
+    // Aplicar diferentes efectos según el tipo de objeto
+    if (PSIn.ObjType == 0)
+    {
+        // Base principal - tablero de ajedrez
+        PSOut.Color = ApplyBaseEffect(PSIn.UV);
+    }
+    else if (PSIn.ObjType == 1)
+    {
+        // Brazos y conectores - gradiente simple
+        PSOut.Color = ApplyConnectorEffect(PSIn.UV);
+    }
+    else if (PSIn.ObjType >= 3 && PSIn.ObjType <= 8)
+    {
+        // Cubos - texturas únicas por cara
+        // La variación de tipo (3-8) permite rotar texturas entre cubos
+        uint face = DetermineCubeFace(PSIn.UV);
+        uint variation = PSIn.ObjType - 3; // Convertir rango 3-8 a 0-5
+        PSOut.Color = ApplyCubeTextures(PSIn.UV, face, variation);
+    }
+    else
+    {
+        // Textura por defecto
+        PSOut.Color = g_Texture.Sample(g_Texture_sampler, PSIn.UV);
+    }
+    
+#if CONVERT_PS_OUTPUT_TO_GAMMA
+    // Corrección gamma
+    PSOut.Color.rgb = pow(PSOut.Color.rgb, float3(1.0 / 2.2, 1.0 / 2.2, 1.0 / 2.2));
+#endif
+}
